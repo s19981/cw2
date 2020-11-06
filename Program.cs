@@ -2,36 +2,52 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Xml.Serialization;
 
 namespace cw2
 {
+    public class UczelniaRoot
+    {
+        public Uczelnia uczelnia { get; set; }
+    }
+
     [XmlRoot("uczelnia")]
     public class Uczelnia
     {
         [XmlAttribute]
-        public string createdAt = DateTime.Now.ToString("dd.mm.yyyy");
+        public string createdAt { get; set; }
         [XmlAttribute]
-        public string author = "Monika Dubel";
+        public string author { get; set; }
         [XmlArrayItem(ElementName = "student", Type = typeof(Student))]
         [XmlArray("studenci")]
-        public List<Student> Studenci;
+        [JsonPropertyName("studenci")]
+        public List<Student> Studenci { get; set; }
         [XmlArrayItem(ElementName = "studies", Type = typeof(ActiveStudia))]
         [XmlArray("activeStudies")]
-        public List<ActiveStudia> ActiveStudies;
+        [JsonPropertyName("activeStudies")]
+        public List<ActiveStudia> ActiveStudies { get; set; }
+
+        public Uczelnia()
+        {
+            createdAt = DateTime.Now.ToString("dd.mm.yyyy");
+            author = "Monika Dubel";
+        }
     }
+
     [XmlRoot("student")]
     public class Student
     {
-        public string fname;
-        public string lname;
-        public string birthdate;
+        public string fname { get; set; }
+        public string lname { get; set; }
+        public string birthdate { get; set; }
         [XmlAttribute]
-        public string indexNumber;
-        public string email;
-        public string mothersName;
-        public string fathersName;
-        public Studia studies;
+        public string indexNumber { get; set; }
+        public string email { get; set; }
+        public string mothersName { get; set; }
+        public string fathersName { get; set; }
+        public Studia studies { get; set; }
 
         public Student()
         {
@@ -44,18 +60,36 @@ namespace cw2
             fathersName = null;
             studies = new Studia();
         }
+
+        public Student(string[] student)
+        {
+            fname = student[0];
+            lname = student[1];
+            indexNumber = student[4];
+            birthdate = DateTime.Parse(student[5]).ToString("dd.mm.yyyy");
+            email = student[6];
+            mothersName = student[7];
+            fathersName = student[8];
+            studies = new Studia(student[2], student[3]);
+        }
     }
 
     [XmlRoot("studies")]
     public class Studia
     {
-        public string name;
-        public string mode;
+        public string name { get; set; }
+        public string mode { get; set; }
 
         public Studia()
         {
             name = null;
             mode = null;
+        }
+
+        public Studia(string sName, string sMode)
+        {
+            name = sName;
+            mode = sMode;
         }
     }
 
@@ -63,9 +97,9 @@ namespace cw2
     public class ActiveStudia
     {
         [XmlAttribute]
-        public string name;
+        public string name { get; set; }
         [XmlAttribute]
-        public int numberOfStudents;
+        public int numberOfStudents { get; set; }
 
         public ActiveStudia()
         {
@@ -84,9 +118,9 @@ namespace cw2
     {
         static void Main(string[] args)
         {
-            var file_path = "/Users/monika/Desktop/APBD/cw2/data.csv";
-            var target_path = "/Users/monika/Desktop/APBD/cw2/żesult.xml";
-            var log_path = "/Users/monika/Desktop/APBD/cw2/łog.txt";
+            var file_path = "data.csv";
+            var target_path = "żesult.xml";
+            var log_path = "łog.txt";
             var data_format = "xml";
 
             StreamWriter sw = File.CreateText(log_path);
@@ -99,79 +133,78 @@ namespace cw2
                     target_path = args[1];
                     data_format = args[2];
                 }
+
+                if (!File.Exists(file_path)) { throw new FileNotFoundException("Plik nazwa nie istnieje"); }
+
+                var uczelnia = new Uczelnia();
+                var list = new List<Student>();
+                var listOfStudies = new List<ActiveStudia>();
+                string line = null;
+
+                using (var stream = new StreamReader(File.OpenRead(file_path)))
+                {
+                    while ((line = stream.ReadLine()) != null)
+                    {
+                        try
+                        {
+                            string[] student = line.Split(',');
+                            if (student.Length != 9) { throw new Exception("Wiersz student zawiera błędną liczbę kolumn: " + line); }
+                            if (student.Any(x => String.IsNullOrEmpty(x))) { throw new Exception("Wiersz student zawiera pustą kolumnę: " + line); }
+
+                            var st = new Student(student);
+                            if (list.Exists(x => x.fname == st.fname && x.lname == st.lname && x.indexNumber == st.indexNumber)) { throw new Exception("Wiersz student jest duplikatem: " + line); }
+
+                            list.Add(st);
+                        }
+                        catch (Exception e)
+                        {
+                            sw.WriteLine(e);
+                        }
+                    }
+
+                    var query = list.GroupBy(
+                        student => student.studies.name,
+                        student => student.indexNumber,
+                        (name, id) => new
+                        {
+                            Key = name,
+                            Count = id.Count()
+                        }
+                    );
+
+                    foreach (var r in query)
+                    {
+                        listOfStudies.Add(new ActiveStudia(r.Key, r.Count));
+                    }
+
+                    uczelnia.Studenci = list;
+                    uczelnia.ActiveStudies = listOfStudies;
+
+
+                    if (data_format == "xml")
+                    {
+                        FileStream writer = new FileStream(target_path, FileMode.Create);
+                        XmlSerializer serializer = new XmlSerializer(typeof(Uczelnia));
+                        XmlSerializerNamespaces ns = new XmlSerializerNamespaces();
+                        ns.Add("", "");
+                        serializer.Serialize(writer, uczelnia, ns);
+                    }
+
+                    if (data_format == "json")
+                    {
+                        var uczelniaRoot = new UczelniaRoot();
+                        uczelniaRoot.uczelnia = uczelnia;
+                        var jsonString = JsonSerializer.Serialize(uczelniaRoot);
+                        File.WriteAllText(target_path, jsonString);
+                    }
+                }
+
+
             }
-            catch (System.IndexOutOfRangeException e)
+            catch (Exception e)
             {
                 sw.WriteLine(e);
             }
-
-            FileStream writer = new FileStream(target_path, FileMode.Create);
-            XmlSerializer serializer = new XmlSerializer(typeof(Uczelnia));
-            XmlSerializerNamespaces ns = new XmlSerializerNamespaces();
-            ns.Add("", "");
-            var uczelnia = new Uczelnia();
-            var list = new List<Student>();
-            var listOfStudies = new List<ActiveStudia>();
-            string line = null;
-
-            
-            using (var stream = new StreamReader(File.OpenRead(file_path)))
-            {
-                while ((line = stream.ReadLine()) != null)
-                {
-                    try
-                    {
-                        string[] student = line.Split(',');
-                        if (student.Length != 9)
-                        {
-                            throw new Exception("Wiersz student zawiera błędną liczbę kolumn: " + line);
-                        }
-                        if (student.Any(x => String.IsNullOrEmpty(x)))
-                        {
-                            throw new Exception("Wiersz student zawiera pustą kolumnę: " + line);
-                        }
-                        var st = new Student();
-                        st.fname = student[0];
-                        st.lname = student[1];
-                        st.indexNumber = student[4];
-                        st.birthdate = DateTime.Parse(student[5]).ToString("dd.mm.yyyy");
-                        st.email = student[6];
-                        st.mothersName = student[7];
-                        st.fathersName = student[8];
-                        st.studies.name = student[2];
-                        st.studies.mode = student[3];
-
-                        if (list.Exists(x => x.fname == st.fname && x.lname == st.lname && x.indexNumber == st.indexNumber))
-                        {
-                            throw new Exception("Wiersz student jest duplikatem: " + line);
-                        }
-                        list.Add(st);
-                    }
-                    catch (Exception e)
-                    {
-                        sw.WriteLine(e);
-                    }
-                }
-            }
-
-            var query = list.GroupBy(
-                student => student.studies.name,
-                student => student.indexNumber,
-                (name, id) => new
-                {
-                    Key = name,
-                    Count = id.Count()
-                });
-
-            foreach (var r in query)
-            {
-                listOfStudies.Add(new ActiveStudia(r.Key, r.Count));
-            }
-
-            uczelnia.Studenci = list;
-            uczelnia.ActiveStudies = listOfStudies;
-            serializer.Serialize(writer, uczelnia, ns);
-
         }
     }
 }
